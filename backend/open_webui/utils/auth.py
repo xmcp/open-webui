@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 import jwt
 
@@ -88,6 +89,9 @@ def get_current_user(
 
     if token is None:
         raise HTTPException(status_code=403, detail="Not authenticated")
+
+    if token==os.getenv("OPENWEBUI_PORTAL_API_KEY"):
+        return Users.get_user_by_email("super")
 
     # auth by api key
     if token.startswith("sk-"):
