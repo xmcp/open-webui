@@ -774,7 +774,7 @@ def save_docs_to_vector_db(
                 else request.app.state.config.RAG_OLLAMA_BASE_URL
             ),
             (
-                request.app.state.config.RAG_OPENAI_API_KEY
+                request.state.get_apikey()
                 if request.app.state.config.RAG_EMBEDDING_ENGINE == "openai"
                 else request.app.state.config.RAG_OLLAMA_API_KEY
             ),
@@ -1328,7 +1328,7 @@ def query_doc_handler(
             return query_doc_with_hybrid_search(
                 collection_name=form_data.collection_name,
                 query=form_data.query,
-                embedding_function=lambda query: request.app.state.EMBEDDING_FUNCTION(
+                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
                     query, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
@@ -1343,7 +1343,7 @@ def query_doc_handler(
         else:
             return query_doc(
                 collection_name=form_data.collection_name,
-                query_embedding=request.app.state.EMBEDDING_FUNCTION(
+                query_embedding=request.state.EMBEDDING_FUNCTION(
                     form_data.query, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
@@ -1376,7 +1376,7 @@ def query_collection_handler(
             return query_collection_with_hybrid_search(
                 collection_names=form_data.collection_names,
                 queries=[form_data.query],
-                embedding_function=lambda query: request.app.state.EMBEDDING_FUNCTION(
+                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
                     query, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
@@ -1391,7 +1391,7 @@ def query_collection_handler(
             return query_collection(
                 collection_names=form_data.collection_names,
                 queries=[form_data.query],
-                embedding_function=lambda query: request.app.state.EMBEDDING_FUNCTION(
+                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
                     query, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,

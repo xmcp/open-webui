@@ -190,7 +190,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
                 data=body,
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {request.app.state.config.OPENAI_API_KEYS[idx]}",
+                    "Authorization": f"Bearer {request.state.get_apikey()}",
                     **(
                         {
                             "HTTP-Referer": "https://openwebui.com/",
@@ -271,7 +271,7 @@ async def get_all_models_responses(request: Request) -> list:
         ):
             request_tasks.append(
                 send_get_request(
-                    f"{url}/models", request.app.state.config.OPENAI_API_KEYS[idx]
+                    f"{url}/models", request.state.get_apikey()
                 )
             )
         else:
@@ -290,7 +290,7 @@ async def get_all_models_responses(request: Request) -> list:
                     request_tasks.append(
                         send_get_request(
                             f"{url}/models",
-                            request.app.state.config.OPENAI_API_KEYS[idx],
+                            request.state.get_apikey(),
                         )
                     )
                 else:
@@ -421,7 +421,7 @@ async def get_models(
         models = await get_all_models(request)
     else:
         url = request.app.state.config.OPENAI_API_BASE_URLS[url_idx]
-        key = request.app.state.config.OPENAI_API_KEYS[url_idx]
+        key = request.state.get_apikey()
 
         r = None
         async with aiohttp.ClientSession(
@@ -619,10 +619,10 @@ async def generate_chat_completion(
         }
 
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
-    key = request.app.state.config.OPENAI_API_KEYS[idx]
+    key = request.state.get_apikey()
 
     # Fix: O1 does not support the "max_tokens" parameter, Modify "max_tokens" to "max_completion_tokens"
-    is_o1 = payload["model"].lower().startswith("o1-")
+    is_o1 = payload["model"].lower().rpartition("/")[2].startswith("o1-")
     if is_o1:
         payload = openai_o1_handler(payload)
     elif "api.openai.com" not in url:
@@ -726,7 +726,7 @@ async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
 
     idx = 0
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
-    key = request.app.state.config.OPENAI_API_KEYS[idx]
+    key = request.state.get_apikey()
 
     r = None
     session = None

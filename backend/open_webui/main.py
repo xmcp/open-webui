@@ -734,6 +734,91 @@ async def inspect_websocket(request: Request, call_next):
     return await call_next(request)
 
 
+def use_cached_value(update, ttl=None):
+    cached = update()
+    last_update = time.time()
+
+    def getter(refresh=False):
+        nonlocal cached
+        nonlocal last_update
+
+        if ttl is not None and time.time() - last_update > ttl:
+            refresh = True
+
+        if refresh:
+            cached = update()
+            last_update = time.time()
+
+        return cached
+
+    return getter
+
+
+def _read_users():
+    with open("/mnt/all_users.json") as f:
+        return json.load(f)
+
+
+get_users = use_cached_value(_read_users, ttl=10)
+
+
+@app.middleware("http")
+async def set_openai_key(request: Request, call_next):
+    cached_res = None
+    def get_cur_key():
+        nonlocal cached_res
+
+        if not cached_res:
+            all_users = get_users()
+
+            uid = request.headers.get("X-Auth-User", None)
+            if not uid:
+                raise HTTPException(status_code=451, detail="user id header not found")
+
+            user = all_users.get(uid, None)
+            if not user:
+                raise HTTPException(status_code=451, detail="user not found")
+
+            web_key = user.get("web", None)
+            if not web_key or not web_key.startswith("sk-"):
+                raise HTTPException(status_code=451, detail="web key not found")
+
+            cached_res = web_key
+
+        return cached_res
+
+    cached_ef = None
+    def get_ef():
+        nonlocal cached_ef
+
+        if not cached_ef:
+            cached_ef = get_embedding_function(
+                app.state.config.RAG_EMBEDDING_ENGINE,
+                app.state.config.RAG_EMBEDDING_MODEL,
+                app.state.ef,
+                (
+                    app.state.config.RAG_OPENAI_API_BASE_URL
+                    if app.state.config.RAG_EMBEDDING_ENGINE == "openai"
+                    else app.state.config.RAG_OLLAMA_BASE_URL
+                ),
+                (
+                    get_cur_key()
+                    if app.state.config.RAG_EMBEDDING_ENGINE == "openai"
+                    else app.state.config.RAG_OLLAMA_API_KEY
+                ),
+                app.state.config.RAG_EMBEDDING_BATCH_SIZE,
+            )
+
+        return cached_ef
+
+    def call_ef(*args, **kwargs):
+        return get_ef()(*args, **kwargs)
+
+    request.state.get_apikey = get_cur_key
+    request.state.EMBEDDING_FUNCTION = call_ef
+
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOW_ORIGIN,
