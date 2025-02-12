@@ -774,7 +774,7 @@ def save_docs_to_vector_db(
                 else request.app.state.config.RAG_OLLAMA_BASE_URL
             ),
             (
-                request.state.get_apikey()
+                request.state.get_apikey("task")
                 if request.app.state.config.RAG_EMBEDDING_ENGINE == "openai"
                 else request.app.state.config.RAG_OLLAMA_API_KEY
             ),

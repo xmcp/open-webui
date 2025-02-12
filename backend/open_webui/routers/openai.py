@@ -619,7 +619,9 @@ async def generate_chat_completion(
         }
 
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
-    key = request.state.get_apikey()
+
+    scope = "task" if (metadata and metadata.get("task", None)) else "web"
+    key = request.state.get_apikey(scope)
 
     # Fix: O1 does not support the "max_tokens" parameter, Modify "max_tokens" to "max_completion_tokens"
     is_o1 = payload["model"].lower().rpartition("/")[2].startswith("o1-")

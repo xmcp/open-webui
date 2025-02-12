@@ -764,28 +764,22 @@ get_users = use_cached_value(_read_users, ttl=10)
 
 @app.middleware("http")
 async def set_openai_key(request: Request, call_next):
-    cached_res = None
-    def get_cur_key():
-        nonlocal cached_res
+    def get_cur_key(scope="web"):
+        all_users = get_users()
 
-        if not cached_res:
-            all_users = get_users()
+        uid = request.headers.get("X-Auth-User", None)
+        if not uid:
+            raise HTTPException(status_code=451, detail="user id header not found")
 
-            uid = request.headers.get("X-Auth-User", None)
-            if not uid:
-                raise HTTPException(status_code=451, detail="user id header not found")
+        user = all_users.get(uid, None)
+        if not user:
+            raise HTTPException(status_code=451, detail="user not found")
 
-            user = all_users.get(uid, None)
-            if not user:
-                raise HTTPException(status_code=451, detail="user not found")
+        sk = user.get(scope, None)
+        if not sk or not sk.startswith("sk-"):
+            raise HTTPException(status_code=451, detail="sk not found")
 
-            web_key = user.get("web", None)
-            if not web_key or not web_key.startswith("sk-"):
-                raise HTTPException(status_code=451, detail="web key not found")
-
-            cached_res = web_key
-
-        return cached_res
+        return sk
 
     cached_ef = None
     def get_ef():
@@ -802,7 +796,7 @@ async def set_openai_key(request: Request, call_next):
                     else app.state.config.RAG_OLLAMA_BASE_URL
                 ),
                 (
-                    get_cur_key()
+                    get_cur_key("task")
                     if app.state.config.RAG_EMBEDDING_ENGINE == "openai"
                     else app.state.config.RAG_OLLAMA_API_KEY
                 ),
