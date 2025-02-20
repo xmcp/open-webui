@@ -187,7 +187,7 @@ def merge_and_sort_query_results(
         # DISTINCT(chunk_id,file_id) - in case if id (chunk_ids) become ordinals
         combined_ids.extend(
             [
-                f"{id}-{meta['file_id']}"
+                f"{id}-{meta.get('file_id', '')}"
                 for id, meta in zip(data["ids"][0], data["metadatas"][0])
             ]
         )
