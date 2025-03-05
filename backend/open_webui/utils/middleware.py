@@ -1561,37 +1561,6 @@ async def process_chat_response(
                                                             "arguments"
                                                         ] += delta_arguments
 
-                                    reason_value = delta.get("reasoning_content")
-
-                                    if reason_value:
-                                        if not content_blocks:
-                                            content_blocks.append({
-                                                "type": "text",
-                                                "content": "",
-                                            })
-
-                                        if content_blocks[0]["type"] != "reasoning":
-                                            content_blocks.insert(0, {
-                                                "type": "reasoning",
-                                                "start_tag": "think",
-                                                "end_tag": "think",
-                                                "content": "",
-                                                "started_at": time.time(),
-                                            })
-
-                                        content_blocks[0]["content"] += reason_value
-                                        content_blocks[0]["ended_at"] = time.time()
-                                        content_blocks[0]["duration"] = int(
-                                            content_blocks[0]["ended_at"]
-                                            - content_blocks[0]["started_at"]
-                                        )
-
-                                        data = {
-                                            "content": serialize_content_blocks(
-                                                content_blocks
-                                            ),
-                                        }
-
                                     value = delta.get("content")
 
                                     reasoning_content = delta.get("reasoning_content")
