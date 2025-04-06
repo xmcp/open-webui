@@ -74,7 +74,6 @@ from open_webui.utils.misc import (
 )
 from open_webui.utils.auth import get_admin_user, get_verified_user
 
-
 from open_webui.config import (
     ENV,
     RAG_EMBEDDING_MODEL_AUTO_UPDATE,
@@ -83,6 +82,8 @@ from open_webui.config import (
     RAG_RERANKING_MODEL_TRUST_REMOTE_CODE,
     UPLOAD_DIR,
     DEFAULT_LOCALE,
+    RAG_EMBEDDING_CONTENT_PREFIX,
+    RAG_EMBEDDING_QUERY_PREFIX,
 )
 from open_webui.env import (
     SRC_LOG_LEVELS,
@@ -123,7 +124,7 @@ def get_ef(
 
 
 def get_rf(
-    reranking_model: str,
+    reranking_model: Optional[str] = None,
     auto_update: bool = False,
 ):
     rf = None
@@ -358,9 +359,13 @@ async def get_rag_config(request: Request, user=Depends(get_admin_user)):
         "content_extraction": {
             "engine": request.app.state.config.CONTENT_EXTRACTION_ENGINE,
             "tika_server_url": request.app.state.config.TIKA_SERVER_URL,
+            "docling_server_url": request.app.state.config.DOCLING_SERVER_URL,
             "document_intelligence_config": {
                 "endpoint": request.app.state.config.DOCUMENT_INTELLIGENCE_ENDPOINT,
                 "key": request.app.state.config.DOCUMENT_INTELLIGENCE_KEY,
+            },
+            "mistral_ocr_config": {
+                "api_key": request.app.state.config.MISTRAL_OCR_API_KEY,
             },
         },
         "chunk": {
@@ -425,10 +430,16 @@ class DocumentIntelligenceConfigForm(BaseModel):
     key: str
 
 
+class MistralOCRConfigForm(BaseModel):
+    api_key: str
+
+
 class ContentExtractionConfig(BaseModel):
     engine: str = ""
     tika_server_url: Optional[str] = None
+    docling_server_url: Optional[str] = None
     document_intelligence_config: Optional[DocumentIntelligenceConfigForm] = None
+    mistral_ocr_config: Optional[MistralOCRConfigForm] = None
 
 
 class ChunkParamUpdateForm(BaseModel):
@@ -540,12 +551,19 @@ async def update_rag_config(
         request.app.state.config.TIKA_SERVER_URL = (
             form_data.content_extraction.tika_server_url
         )
+        request.app.state.config.DOCLING_SERVER_URL = (
+            form_data.content_extraction.docling_server_url
+        )
         if form_data.content_extraction.document_intelligence_config is not None:
             request.app.state.config.DOCUMENT_INTELLIGENCE_ENDPOINT = (
                 form_data.content_extraction.document_intelligence_config.endpoint
             )
             request.app.state.config.DOCUMENT_INTELLIGENCE_KEY = (
                 form_data.content_extraction.document_intelligence_config.key
+            )
+        if form_data.content_extraction.mistral_ocr_config is not None:
+            request.app.state.config.MISTRAL_OCR_API_KEY = (
+                form_data.content_extraction.mistral_ocr_config.api_key
             )
 
     if form_data.chunk is not None:
@@ -648,9 +666,13 @@ async def update_rag_config(
         "content_extraction": {
             "engine": request.app.state.config.CONTENT_EXTRACTION_ENGINE,
             "tika_server_url": request.app.state.config.TIKA_SERVER_URL,
+            "docling_server_url": request.app.state.config.DOCLING_SERVER_URL,
             "document_intelligence_config": {
                 "endpoint": request.app.state.config.DOCUMENT_INTELLIGENCE_ENDPOINT,
                 "key": request.app.state.config.DOCUMENT_INTELLIGENCE_KEY,
+            },
+            "mistral_ocr_config": {
+                "api_key": request.app.state.config.MISTRAL_OCR_API_KEY,
             },
         },
         "chunk": {
@@ -713,6 +735,7 @@ async def get_query_settings(request: Request, user=Depends(get_admin_user)):
         "status": True,
         "template": request.app.state.config.RAG_TEMPLATE,
         "k": request.app.state.config.TOP_K,
+        "k_reranker": request.app.state.config.TOP_K_RERANKER,
         "r": request.app.state.config.RELEVANCE_THRESHOLD,
         "hybrid": request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
     }
@@ -720,6 +743,7 @@ async def get_query_settings(request: Request, user=Depends(get_admin_user)):
 
 class QuerySettingsForm(BaseModel):
     k: Optional[int] = None
+    k_reranker: Optional[int] = None
     r: Optional[float] = None
     template: Optional[str] = None
     hybrid: Optional[bool] = None
@@ -731,16 +755,21 @@ async def update_query_settings(
 ):
     request.app.state.config.RAG_TEMPLATE = form_data.template
     request.app.state.config.TOP_K = form_data.k if form_data.k else 4
+    request.app.state.config.TOP_K_RERANKER = form_data.k_reranker or 4
     request.app.state.config.RELEVANCE_THRESHOLD = form_data.r if form_data.r else 0.0
 
     request.app.state.config.ENABLE_RAG_HYBRID_SEARCH = (
         form_data.hybrid if form_data.hybrid else False
     )
 
+    if not request.app.state.config.ENABLE_RAG_HYBRID_SEARCH:
+        request.app.state.rf = None
+
     return {
         "status": True,
         "template": request.app.state.config.RAG_TEMPLATE,
         "k": request.app.state.config.TOP_K,
+        "k_reranker": request.app.state.config.TOP_K_RERANKER,
         "r": request.app.state.config.RELEVANCE_THRESHOLD,
         "hybrid": request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
     }
@@ -881,7 +910,9 @@ def save_docs_to_vector_db(
         )
 
         embeddings = embedding_function(
-            list(map(lambda x: x.replace("\n", " "), texts)), user=user
+            list(map(lambda x: x.replace("\n", " "), texts)),
+            prefix=RAG_EMBEDDING_CONTENT_PREFIX,
+            user=user,
         )
 
         items = [
@@ -990,9 +1021,11 @@ def process_file(
                 loader = Loader(
                     engine=request.app.state.config.CONTENT_EXTRACTION_ENGINE,
                     TIKA_SERVER_URL=request.app.state.config.TIKA_SERVER_URL,
+                    DOCLING_SERVER_URL=request.app.state.config.DOCLING_SERVER_URL,
                     PDF_EXTRACT_IMAGES=request.app.state.config.PDF_EXTRACT_IMAGES,
                     DOCUMENT_INTELLIGENCE_ENDPOINT=request.app.state.config.DOCUMENT_INTELLIGENCE_ENDPOINT,
                     DOCUMENT_INTELLIGENCE_KEY=request.app.state.config.DOCUMENT_INTELLIGENCE_KEY,
+                    MISTRAL_OCR_API_KEY=request.app.state.config.MISTRAL_OCR_API_KEY,
                 )
                 docs = loader.load(
                     file.filename, file.meta.get("content_type"), file_path
@@ -1488,6 +1521,7 @@ class QueryDocForm(BaseModel):
     collection_name: str
     query: str
     k: Optional[int] = None
+    k_reranker: Optional[int] = None
     r: Optional[float] = None
     hybrid: Optional[bool] = None
 
@@ -1500,14 +1534,21 @@ def query_doc_handler(
 ):
     try:
         if request.app.state.config.ENABLE_RAG_HYBRID_SEARCH:
+            collection_results = {}
+            collection_results[form_data.collection_name] = VECTOR_DB_CLIENT.get(
+                collection_name=form_data.collection_name
+            )
             return query_doc_with_hybrid_search(
                 collection_name=form_data.collection_name,
+                collection_result=collection_results[form_data.collection_name],
                 query=form_data.query,
-                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
-                    query, user=user
+                embedding_function=lambda query, prefix: request.state.EMBEDDING_FUNCTION(
+                    query, prefix=prefix, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
                 reranking_function=request.app.state.rf,
+                k_reranker=form_data.k_reranker
+                or request.app.state.config.TOP_K_RERANKER,
                 r=(
                     form_data.r
                     if form_data.r
@@ -1519,7 +1560,7 @@ def query_doc_handler(
             return query_doc(
                 collection_name=form_data.collection_name,
                 query_embedding=request.state.EMBEDDING_FUNCTION(
-                    form_data.query, user=user
+                    form_data.query, prefix=RAG_EMBEDDING_QUERY_PREFIX, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
                 user=user,
@@ -1536,6 +1577,7 @@ class QueryCollectionsForm(BaseModel):
     collection_names: list[str]
     query: str
     k: Optional[int] = None
+    k_reranker: Optional[int] = None
     r: Optional[float] = None
     hybrid: Optional[bool] = None
 
@@ -1551,11 +1593,13 @@ def query_collection_handler(
             return query_collection_with_hybrid_search(
                 collection_names=form_data.collection_names,
                 queries=[form_data.query],
-                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
-                    query, user=user
+                embedding_function=lambda query, prefix: request.state.EMBEDDING_FUNCTION(
+                    query, prefix=prefix, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
                 reranking_function=request.app.state.rf,
+                k_reranker=form_data.k_reranker
+                or request.app.state.config.TOP_K_RERANKER,
                 r=(
                     form_data.r
                     if form_data.r
@@ -1566,8 +1610,8 @@ def query_collection_handler(
             return query_collection(
                 collection_names=form_data.collection_names,
                 queries=[form_data.query],
-                embedding_function=lambda query: request.state.EMBEDDING_FUNCTION(
-                    query, user=user
+                embedding_function=lambda query, prefix: request.state.EMBEDDING_FUNCTION(
+                    query, prefix=prefix, user=user
                 ),
                 k=form_data.k if form_data.k else request.app.state.config.TOP_K,
             )
@@ -1644,7 +1688,11 @@ if ENV == "dev":
 
     @router.get("/ef/{text}")
     async def get_embeddings(request: Request, text: Optional[str] = "Hello World!"):
-        return {"result": request.app.state.EMBEDDING_FUNCTION(text)}
+        return {
+            "result": request.app.state.EMBEDDING_FUNCTION(
+                text, prefix=RAG_EMBEDDING_QUERY_PREFIX
+            )
+        }
 
 
 class BatchProcessFilesForm(BaseModel):
