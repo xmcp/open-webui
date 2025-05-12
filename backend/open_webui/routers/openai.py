@@ -21,6 +21,7 @@ from open_webui.config import (
     CACHE_DIR,
 )
 from open_webui.env import (
+    AIOHTTP_CLIENT_SESSION_SSL,
     AIOHTTP_CLIENT_TIMEOUT,
     AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST,
     ENABLE_FORWARD_USER_INFO_HEADERS,
@@ -74,6 +75,7 @@ async def send_get_request(url, key=None, user: UserModel = None):
                         else {}
                     ),
                 },
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
             ) as response:
                 return await response.json()
     except Exception as e:
@@ -92,20 +94,19 @@ async def cleanup_response(
         await session.close()
 
 
-def openai_o1_o3_handler(payload):
+def openai_o_series_handler(payload):
     """
-    Handle o1, o3 specific parameters
+    Handle "o" series specific parameters
     """
     if "max_tokens" in payload:
-        # Remove "max_tokens" from the payload
+        # Convert "max_tokens" to "max_completion_tokens" for all o-series models
         payload["max_completion_tokens"] = payload["max_tokens"]
         del payload["max_tokens"]
 
-    # Fix: o1 and o3 do not support the "system" role directly.
-    # For older models like "o1-mini" or "o1-preview", use role "user".
-    # For newer o1/o3 models, replace "system" with "developer".
+    # Handle system role conversion based on model type
     if payload["messages"][0]["role"] == "system":
         model_lower = payload["model"].lower()
+        # Legacy models use "user" role instead of "system"
         if model_lower.startswith("o1-mini") or model_lower.startswith("o1-preview"):
             payload["messages"][0]["role"] = "user"
         else:
@@ -462,7 +463,8 @@ async def get_models(
 
         r = None
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST)
+            trust_env=True,
+            timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST),
         ) as session:
             try:
                 async with session.get(
@@ -481,6 +483,7 @@ async def get_models(
                             else {}
                         ),
                     },
+                    ssl=AIOHTTP_CLIENT_SESSION_SSL,
                 ) as r:
                     if r.status != 200:
                         # Extract response error details if available
@@ -542,7 +545,8 @@ async def verify_connection(
     key = form_data.key
 
     async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST)
+        trust_env=True,
+        timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST),
     ) as session:
         try:
             async with session.get(
@@ -561,6 +565,7 @@ async def verify_connection(
                         else {}
                     ),
                 },
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
             ) as r:
                 if r.status != 200:
                     # Extract response error details if available
@@ -668,10 +673,10 @@ async def generate_chat_completion(
     scope = "task" if (metadata and metadata.get("task", None)) else "web"
     key = request.state.get_apikey(scope)
 
-    # Fix: o1,o3 does not support the "max_tokens" parameter, Modify "max_tokens" to "max_completion_tokens"
-    is_o1_o3 = payload["model"].lower().rpartition("/")[2].startswith(("o1", "o3-"))
-    if is_o1_o3:
-        payload = openai_o1_o3_handler(payload)
+    # Check if model is from "o" series
+    is_o_series = payload["model"].lower().rpartition("/")[2].startswith(("o1", "o3", "o4"))
+    if is_o_series:
+        payload = openai_o_series_handler(payload)
     elif "api.openai.com" not in url:
         # Remove "max_completion_tokens" from the payload for backward compatibility
         if "max_completion_tokens" in payload:
@@ -725,6 +730,7 @@ async def generate_chat_completion(
                     else {}
                 ),
             },
+            ssl=AIOHTTP_CLIENT_SESSION_SSL,
         )
 
         # Check if response is SSE
@@ -804,6 +810,7 @@ async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
                     else {}
                 ),
             },
+            ssl=AIOHTTP_CLIENT_SESSION_SSL,
         )
         r.raise_for_status()
 
