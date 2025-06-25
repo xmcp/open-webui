@@ -911,7 +911,7 @@ async def embeddings(request: Request, form_data: dict, user):
     if model_id in models:
         idx = models[model_id]["urlIdx"]
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
-    key = request.app.state.config.OPENAI_API_KEYS[idx]
+    key = request.state.get_apikey()
     r = None
     session = None
     streaming = False
